@@ -1,0 +1,207 @@
+#if Perceptual_distortion_intra
+#define SIZE_1 8 // matrix size
+#define SIGMA_1 0.4206// 0.4206 for 4k sequence and 0.3577 for 8k sequence
+#define multileves 3 //multiscale filter kernel
+#endif
+
+static int xCalcHADs8x8_ISlice(const Pel *piOrg, const int iStrideOrg)
+{
+  int k, i, j, jj;
+  int diff[64], m1[8][8], m2[8][8], m3[8][8], iSumHad = 0;
+
+  for (k = 0; k < 64; k += 8)
+  {
+    diff[k + 0] = piOrg[0];
+    diff[k + 1] = piOrg[1];
+    diff[k + 2] = piOrg[2];
+    diff[k + 3] = piOrg[3];
+    diff[k + 4] = piOrg[4];
+    diff[k + 5] = piOrg[5];
+    diff[k + 6] = piOrg[6];
+    diff[k + 7] = piOrg[7];
+
+    piOrg += iStrideOrg;
+  }
+
+  // for ( i = 0; i < 64; i++) 
+  // { 
+  //   if( i != 0 && i%8 == 0)
+  //   {
+  //     printf("\n");
+  //   }  
+  //   printf("%d ", diff[i]);    
+  // }
+
+#if Perceptual_distortion_intra
+  int diff_matrix[SIZE_1][SIZE_1]; 
+  for(int h=0; h<8; h++)
+  {
+    for(int w=0; w<8; w++)
+    {
+      diff_matrix[h][w] = diff[ h*SIZE_1 + w ];
+    }
+  }
+
+  // custom Gaussian filter
+  int m_kernelSize;
+  double** m_kernel;
+  for( i = 1; i < (multileves-1); i++ )
+  {
+    m_kernelSize = 2 * i + 1;
+        
+    m_kernel = new double* [m_kernelSize];
+    for( j = 0; j < m_kernelSize; j++ )
+    {
+      m_kernel[j] = new double[m_kernelSize];
+    }
+
+    double kernelsum = 0.0;
+    int center = m_kernelSize / 2;
+    for (int y = 0; y < m_kernelSize; y++)
+    {
+      for (int x = 0; x < m_kernelSize; x++)
+      {
+        int offsetX = x - center;
+        int offsetY = y - center;
+        m_kernel[y][x] = exp(-(offsetX * offsetX + offsetY * offsetY) / (2 * SIGMA_1 * SIGMA_1)) / (2 * M_PI * SIGMA_1 * SIGMA_1); // 高斯函数
+        kernelsum += m_kernel[y][x];
+      }
+    }
+
+    int filteredBlock[SIZE_1][SIZE_1] = {0};
+    for (int y = 0; y < 8; y++)
+    {
+      for (int x = 0; x < 8; x++)
+      {
+        double sum = 0.0;
+        for (int ky = 0; ky < m_kernelSize; ky++)
+        {
+          for (int kx = 0; kx < m_kernelSize; kx++)
+          {
+            int offsetX = x + kx - center;
+            int offsetY = y + ky - center;
+            if (offsetX >= 0 && offsetX < 8 && offsetY >= 0 && offsetY < 8)
+            {
+              sum += diff_matrix[offsetY][offsetX] * m_kernel[ky][kx];
+            }
+          }
+        }
+        filteredBlock[y][x] = round(sum);
+        // std::cout << filteredBlock[y][x] << " ";
+      }
+      // std::cout << std::endl;
+    }
+
+    for (int y = 0; y < 8; y++)
+    {
+      for (int x = 0; x < 8; x++)
+      {
+        diff_matrix[y][x] = filteredBlock[y][x];
+      }
+    }
+
+    for (int j = 0; j < m_kernelSize; j++)
+    {
+      delete[] m_kernel[j];
+    }
+    delete[] m_kernel;
+  }
+
+  for(int h=0; h<8; h++)
+  {
+    for(int w=0; w<8; w++)
+    {
+      diff[ h*SIZE_1 + w ] = diff_matrix[h][w];
+    }
+  }
+#endif
+
+  //horizontal
+  for (j = 0; j < 8; j++)
+  {
+    jj = j << 3;
+    m2[j][0] = diff[jj    ] + diff[jj + 4];
+    m2[j][1] = diff[jj + 1] + diff[jj + 5];
+    m2[j][2] = diff[jj + 2] + diff[jj + 6];
+    m2[j][3] = diff[jj + 3] + diff[jj + 7];
+    m2[j][4] = diff[jj    ] - diff[jj + 4];
+    m2[j][5] = diff[jj + 1] - diff[jj + 5];
+    m2[j][6] = diff[jj + 2] - diff[jj + 6];
+    m2[j][7] = diff[jj + 3] - diff[jj + 7];
+
+    m1[j][0] = m2[j][0] + m2[j][2];
+    m1[j][1] = m2[j][1] + m2[j][3];
+    m1[j][2] = m2[j][0] - m2[j][2];
+    m1[j][3] = m2[j][1] - m2[j][3];
+    m1[j][4] = m2[j][4] + m2[j][6];
+    m1[j][5] = m2[j][5] + m2[j][7];
+    m1[j][6] = m2[j][4] - m2[j][6];
+    m1[j][7] = m2[j][5] - m2[j][7];
+
+    m2[j][0] = m1[j][0] + m1[j][1];
+    m2[j][1] = m1[j][0] - m1[j][1];
+    m2[j][2] = m1[j][2] + m1[j][3];
+    m2[j][3] = m1[j][2] - m1[j][3];
+    m2[j][4] = m1[j][4] + m1[j][5];
+    m2[j][5] = m1[j][4] - m1[j][5];
+    m2[j][6] = m1[j][6] + m1[j][7];
+    m2[j][7] = m1[j][6] - m1[j][7];
+  }
+
+  //vertical
+  for (i = 0; i < 8; i++)
+  {
+    m3[0][i] = m2[0][i] + m2[4][i];
+    m3[1][i] = m2[1][i] + m2[5][i];
+    m3[2][i] = m2[2][i] + m2[6][i];
+    m3[3][i] = m2[3][i] + m2[7][i];
+    m3[4][i] = m2[0][i] - m2[4][i];
+    m3[5][i] = m2[1][i] - m2[5][i];
+    m3[6][i] = m2[2][i] - m2[6][i];
+    m3[7][i] = m2[3][i] - m2[7][i];
+
+    m1[0][i] = m3[0][i] + m3[2][i];
+    m1[1][i] = m3[1][i] + m3[3][i];
+    m1[2][i] = m3[0][i] - m3[2][i];
+    m1[3][i] = m3[1][i] - m3[3][i];
+    m1[4][i] = m3[4][i] + m3[6][i];
+    m1[5][i] = m3[5][i] + m3[7][i];
+    m1[6][i] = m3[4][i] - m3[6][i];
+    m1[7][i] = m3[5][i] - m3[7][i];
+
+    m2[0][i] = m1[0][i] + m1[1][i];
+    m2[1][i] = m1[0][i] - m1[1][i];
+    m2[2][i] = m1[2][i] + m1[3][i];
+    m2[3][i] = m1[2][i] - m1[3][i];
+    m2[4][i] = m1[4][i] + m1[5][i];
+    m2[5][i] = m1[4][i] - m1[5][i];
+    m2[6][i] = m1[6][i] + m1[7][i];
+    m2[7][i] = m1[6][i] - m1[7][i];
+  }
+
+  // printf("\n");
+  // for ( i = 0; i < 8; i++) 
+  // {
+  //   for ( j = 0; j < 8; j++) 
+  //   {
+  //     printf("%d ", m2[i][j]);
+  //   }
+  //   printf("\n");
+  // }
+
+  for (i = 0; i < 8; i++)
+  {
+    for (j = 0; j < 8; j++)
+    {
+      iSumHad += abs(m2[i][j]);
+    }
+  }
+  iSumHad -= abs(m2[0][0]);
+  iSumHad = (iSumHad + 2) >> 2;
+
+#if Perceptual_distortion_intra
+  // printf("%d ", iSumHad);
+#endif
+
+  return(iSumHad);
+}
